@@ -2,10 +2,13 @@
 
 Resolution order, first non-empty value wins:
 
-1. real process environment (so a systemd/scheduled-task env or a shell
-   export beats everything)
-2. ``kotodama/.env`` in ComfyUI's user directory
-3. a ``.env`` file sitting next to the node package
+1. ``kotodama/.env`` in ComfyUI's user directory, written by the Settings
+   panel (Settings -> Kotodama). This is the one supported place.
+2. a ``.env`` file next to the node package: read only as a legacy fallback
+   for installs configured before the panel existed. Deprecated.
+
+Process environment variables are NOT read (since 0.3.0): one source, set
+from the panel and visible in ComfyUI.
 
 The API key is DELIBERATELY not a node widget. ComfyUI serialises every
 widget value into the saved workflow JSON *and* into the PNG metadata of
@@ -61,7 +64,6 @@ def config_location() -> str:
 
 
 def _sources():
-    yield "env", os.environ
     user_file = user_env_file()
     if user_file is not None:
         yield "userdir", _read_env_file(user_file)
@@ -175,20 +177,13 @@ def valid_endpoint(value: str) -> bool:
     )
 
 
-def shadowed_by_environment(name: str, legacy: str = "") -> bool:
-    """True when a process environment variable overrides what the panel saves."""
-    return bool(os.environ.get(name, "").strip() or (legacy and os.environ.get(legacy, "").strip()))
-
-
 def key_outside_panel() -> str | None:
     """Name the source of an API key the panel cannot remove, or None.
 
-    Keys in the process environment or the node folder's ``.env`` stay in force
-    after the panel deletes its own copy, so they would follow a new endpoint.
+    A key in the node folder's legacy ``.env`` stays in force after the panel
+    deletes its own copy, so it would follow a new endpoint.
     """
     names = ("KOTODAMA_API_KEY", "LITELLM_API_KEY")
-    if any(os.environ.get(name, "").strip() for name in names):
-        return "env"
     node_file = _read_env_file(ENV_FILE)
     if any(node_file.get(name, "").strip() for name in names):
         return "dotenv"
@@ -197,6 +192,9 @@ def key_outside_panel() -> str | None:
 
 def allowed_origins() -> list[str]:
     """Extra browser origins allowed to save settings, e.g. behind a TLS reverse proxy.
+
+    Set by hand as ``KOTODAMA_ALLOWED_ORIGINS=https://a.example,https://b.example``
+    in the user-directory ``kotodama/.env``.
 
     Deliberately not writable from the panel.
     """
@@ -227,7 +225,7 @@ def write_user_settings(updates: dict[str, str | None]) -> Path:
             current[key] = value
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = "# Written by the Kotodama settings panel. Environment variables override these values.\n"
+    body = "# Written by the Kotodama settings panel (Settings -> Kotodama).\n"
     body += "".join(f"{key}={value}\n" for key, value in current.items())
     tmp = path.with_name(f".{path.name}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
